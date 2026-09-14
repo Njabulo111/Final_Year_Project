@@ -291,6 +291,79 @@ class WifiMonitorPlugin : Plugin() {
     }
 
     @PluginMethod
+    fun checkForUpdate(call: PluginCall) {
+        pluginScope.launch {
+            val currentVersionCode = try {
+                context.packageManager.getPackageInfo(context.packageName, 0).let {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) it.longVersionCode.toInt() else @Suppress("DEPRECATION") it.versionCode
+                }
+            } catch (e: Exception) {
+                Int.MAX_VALUE // fail closed: never claim an update is available if we can't read our own version
+            }
+
+            val update = UpdateChecker.checkForUpdate(currentVersionCode)
+            val ret = JSObject()
+            if (update == null) {
+                ret.put("updateAvailable", false)
+            } else {
+                ret.put("updateAvailable", true)
+                ret.put("versionName", update.versionName)
+                ret.put("releaseNotes", update.releaseNotes)
+                ret.put("downloadUrl", update.downloadUrl)
+            }
+            call.resolve(ret)
+        }
+    }
+
+    @PluginMethod
+    fun downloadAndInstallUpdate(call: PluginCall) {
+        val downloadUrl = call.getString("downloadUrl")
+        if (downloadUrl == null) {
+            call.reject("downloadUrl is required")
+            return
+        }
+        pluginScope.launch {
+            val file = withContext(Dispatchers.IO) { UpdateChecker.downloadUpdate(context, downloadUrl) }
+            if (file == null) {
+                call.reject("Update download failed")
+                return@launch
+            }
+            UpdateChecker.launchInstaller(context, file)
+            call.resolve()
+        }
+    }
+
+    @PluginMethod
+    fun getPendingSwitchRecommendation(call: PluginCall) {
+        val prefs = context.getSharedPreferences(MonitorService.PREFS_NAME, android.content.Context.MODE_PRIVATE)
+        val targetSsid = prefs.getString(MonitorService.PENDING_TARGET_SSID, null)
+        val ret = JSObject()
+        if (targetSsid == null) {
+            ret.put("pending", false)
+            call.resolve(ret)
+            return
+        }
+        ret.put("pending", true)
+        ret.put("targetSsid", targetSsid)
+        ret.put("targetBssid", prefs.getString(MonitorService.PENDING_TARGET_BSSID, ""))
+        ret.put("currentSsid", prefs.getString(MonitorService.PENDING_CURRENT_SSID, ""))
+        ret.put("currentBssid", prefs.getString(MonitorService.PENDING_CURRENT_BSSID, ""))
+        ret.put("targetScore", prefs.getFloat(MonitorService.PENDING_TARGET_SCORE, 0f).toDouble())
+        ret.put("currentScore", prefs.getFloat(MonitorService.PENDING_CURRENT_SCORE, 0f).toDouble())
+        ret.put("targetStability", prefs.getFloat(MonitorService.PENDING_TARGET_STABILITY, 0f).toDouble())
+        ret.put("currentStability", prefs.getFloat(MonitorService.PENDING_CURRENT_STABILITY, 0f).toDouble())
+        call.resolve(ret)
+    }
+
+    @PluginMethod
+    fun respondToSwitchRecommendation(call: PluginCall) {
+        val accepted = call.getBoolean("accepted") ?: false
+        val connectSucceeded = if (call.data.has("connectSucceeded")) call.getBoolean("connectSucceeded") else null
+        MonitorService.respondToPendingSwitch(context, accepted, connectSucceeded)
+        call.resolve()
+    }
+
+    @PluginMethod
     fun startTrafficWatch(call: PluginCall) {
         val thresholdKB = call.getInt("thresholdKB", 500) ?: 500
         trafficWatcher.start(pluginScope, thresholdKB.toLong() * 1024L) {

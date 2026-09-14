@@ -54,6 +54,26 @@ export interface ResearchWeights {
   latency: number;
   loss: number;
   stability: number;
+  snr?: number;
+}
+
+export interface UpdateCheckResult {
+  updateAvailable: boolean;
+  versionName?: string;
+  releaseNotes?: string;
+  downloadUrl?: string;
+}
+
+export interface PendingSwitchRecommendation {
+  pending: boolean;
+  targetSsid?: string;
+  targetBssid?: string;
+  currentSsid?: string;
+  currentBssid?: string;
+  targetScore?: number;
+  currentScore?: number;
+  targetStability?: number;
+  currentStability?: number;
 }
 
 export interface ScanHistorySampleRow {
@@ -81,6 +101,10 @@ export interface WifiMonitorPlugin {
   stopBackgroundMonitor(): Promise<void>;
   startTrafficWatch(options?: { thresholdKB?: number }): Promise<void>;
   stopTrafficWatch(): Promise<void>;
+  getPendingSwitchRecommendation(): Promise<PendingSwitchRecommendation>;
+  respondToSwitchRecommendation(options: { accepted: boolean; connectSucceeded?: boolean }): Promise<void>;
+  checkForUpdate(): Promise<UpdateCheckResult>;
+  downloadAndInstallUpdate(options: { downloadUrl: string }): Promise<void>;
   checkPermissions(): Promise<PermissionStatus>;
   requestPermissions(): Promise<PermissionStatus>;
   addListener(eventName: 'trafficSpike', listenerFunc: () => void): Promise<PluginListenerHandle>;

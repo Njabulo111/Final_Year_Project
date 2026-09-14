@@ -20,6 +20,25 @@ data class ScanHistoryRow(
     val totalScore: Int,
     val status: String,
     val connected: Boolean,
+    val snrProxyScore: Int = 0,
+    val switchTriggered: Boolean = false,
+    val switchAccepted: Boolean? = null,
+    val cycleState: String = "MONITORING",
+)
+
+data class SwitchEventRow(
+    val eventId: Long,
+    val timestamp: String,
+    val fromSsid: String,
+    val fromBssid: String,
+    val toSsid: String,
+    val toBssid: String,
+    val fromTotalScore: Int,
+    val toTotalScore: Int,
+    val fromStabilityScore: Int,
+    val toStabilityScore: Int,
+    val accepted: Boolean,
+    val connectSucceeded: Boolean?,
 )
 
 data class KnownNetworkRow(
@@ -42,11 +61,12 @@ data class WeightRow(
 )
 
 private const val DB_NAME = "wifi_research.db"
-private const val DB_VERSION = 1
+private const val DB_VERSION = 2
 
 private const val TABLE_SCAN_HISTORY = "scan_history"
 private const val TABLE_KNOWN_NETWORKS = "known_networks"
 private const val TABLE_WEIGHTS = "weights"
+private const val TABLE_SWITCH_EVENTS = "switch_events"
 
 class ResearchDatabase(context: Context) : SQLiteOpenHelper(context.applicationContext, DB_NAME, null, DB_VERSION) {
 
@@ -67,7 +87,11 @@ class ResearchDatabase(context: Context) : SQLiteOpenHelper(context.applicationC
                 stability_score INTEGER,
                 total_score INTEGER,
                 status TEXT,
-                connected INTEGER
+                connected INTEGER,
+                snr_proxy_score INTEGER DEFAULT 0,
+                switch_triggered INTEGER DEFAULT 0,
+                switch_accepted INTEGER,
+                cycle_state TEXT DEFAULT 'MONITORING'
             )
             """.trimIndent()
         )
@@ -99,23 +123,72 @@ class ResearchDatabase(context: Context) : SQLiteOpenHelper(context.applicationC
             """.trimIndent()
         )
 
+        db.execSQL(
+            """
+            CREATE TABLE $TABLE_SWITCH_EVENTS (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                from_ssid TEXT,
+                from_bssid TEXT,
+                to_ssid TEXT,
+                to_bssid TEXT,
+                from_total_score INTEGER,
+                to_total_score INTEGER,
+                from_stability_score INTEGER,
+                to_stability_score INTEGER,
+                accepted INTEGER,
+                connect_succeeded INTEGER
+            )
+            """.trimIndent()
+        )
+
         seedDefaultWeights(db)
     }
 
+    /**
+     * Additive migrations only — this file is the device's local research log, and an
+     * OTA app update (see the GitHub-releases updater) must never silently erase a
+     * participant's accumulated scan history just because the schema grew a column.
+     */
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        db.execSQL("DROP TABLE IF EXISTS $TABLE_SCAN_HISTORY")
-        db.execSQL("DROP TABLE IF EXISTS $TABLE_KNOWN_NETWORKS")
-        db.execSQL("DROP TABLE IF EXISTS $TABLE_WEIGHTS")
-        onCreate(db)
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE $TABLE_SCAN_HISTORY ADD COLUMN snr_proxy_score INTEGER DEFAULT 0")
+            db.execSQL("ALTER TABLE $TABLE_SCAN_HISTORY ADD COLUMN switch_triggered INTEGER DEFAULT 0")
+            db.execSQL("ALTER TABLE $TABLE_SCAN_HISTORY ADD COLUMN switch_accepted INTEGER")
+            db.execSQL("ALTER TABLE $TABLE_SCAN_HISTORY ADD COLUMN cycle_state TEXT DEFAULT 'MONITORING'")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS $TABLE_SWITCH_EVENTS (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    from_ssid TEXT,
+                    from_bssid TEXT,
+                    to_ssid TEXT,
+                    to_bssid TEXT,
+                    from_total_score INTEGER,
+                    to_total_score INTEGER,
+                    from_stability_score INTEGER,
+                    to_stability_score INTEGER,
+                    accepted INTEGER,
+                    connect_succeeded INTEGER
+                )
+                """.trimIndent()
+            )
+            val revisionNote = "v2 revision (${isoNow()}): added snr term, weights renormalized — see ScoringEngine.kt"
+            db.execSQL(
+                "INSERT OR IGNORE INTO $TABLE_WEIGHTS (metric, weight, last_updated, notes) VALUES ('snr', ${ScoringEngine.WEIGHT_SNR}, '${isoNow()}', '$revisionNote')"
+            )
+        }
     }
 
     private fun seedDefaultWeights(db: SQLiteDatabase) {
         val now = isoNow()
         val defaults = listOf(
-            WeightRow("signal", 0.35, now, "Initial default weight from D1/D2 report"),
-            WeightRow("latency", 0.30, now, "Initial default weight from D1/D2 report"),
-            WeightRow("loss", 0.20, now, "Initial default weight from D1/D2 report"),
-            WeightRow("stability", 0.15, now, "Initial default weight from D1/D2 report"),
+            WeightRow("signal", ScoringEngine.WEIGHT_SIGNAL, now, "v2 default weight (adds SNR term) — see ScoringEngine.kt"),
+            WeightRow("latency", ScoringEngine.WEIGHT_LATENCY, now, "v2 default weight (adds SNR term) — see ScoringEngine.kt"),
+            WeightRow("loss", ScoringEngine.WEIGHT_LOSS, now, "v2 default weight (adds SNR term) — see ScoringEngine.kt"),
+            WeightRow("stability", ScoringEngine.WEIGHT_STABILITY, now, "v2 default weight (adds SNR term) — see ScoringEngine.kt"),
+            WeightRow("snr", ScoringEngine.WEIGHT_SNR, now, "v2 default weight (adds SNR term) — see ScoringEngine.kt"),
         )
         defaults.forEach { row ->
             val values = ContentValues().apply {
@@ -144,11 +217,61 @@ class ResearchDatabase(context: Context) : SQLiteOpenHelper(context.applicationC
             put("total_score", row.totalScore)
             put("status", row.status)
             put("connected", if (row.connected) 1 else 0)
+            put("snr_proxy_score", row.snrProxyScore)
+            put("switch_triggered", if (row.switchTriggered) 1 else 0)
+            put("switch_accepted", row.switchAccepted?.let { if (it) 1 else 0 })
+            put("cycle_state", row.cycleState)
         }
         db.insert(TABLE_SCAN_HISTORY, null, values)
 
         upsertKnownNetwork(row)
         trimScanHistory(db, maxRows = 20000)
+    }
+
+    fun insertSwitchEvent(row: SwitchEventRow) {
+        val db = writableDatabase
+        val values = ContentValues().apply {
+            put("timestamp", row.timestamp)
+            put("from_ssid", row.fromSsid)
+            put("from_bssid", row.fromBssid)
+            put("to_ssid", row.toSsid)
+            put("to_bssid", row.toBssid)
+            put("from_total_score", row.fromTotalScore)
+            put("to_total_score", row.toTotalScore)
+            put("from_stability_score", row.fromStabilityScore)
+            put("to_stability_score", row.toStabilityScore)
+            put("accepted", if (row.accepted) 1 else 0)
+            put("connect_succeeded", row.connectSucceeded?.let { if (it) 1 else 0 })
+        }
+        db.insert(TABLE_SWITCH_EVENTS, null, values)
+    }
+
+    fun getSwitchEvents(limit: Int = 500): List<SwitchEventRow> {
+        val db = readableDatabase
+        val cursor = db.query(TABLE_SWITCH_EVENTS, null, null, null, null, null, "event_id DESC", limit.toString())
+        val rows = mutableListOf<SwitchEventRow>()
+        cursor.use {
+            while (it.moveToNext()) {
+                rows.add(
+                    SwitchEventRow(
+                        eventId = it.getLong(it.getColumnIndexOrThrow("event_id")),
+                        timestamp = it.getString(it.getColumnIndexOrThrow("timestamp")),
+                        fromSsid = it.getString(it.getColumnIndexOrThrow("from_ssid")) ?: "",
+                        fromBssid = it.getString(it.getColumnIndexOrThrow("from_bssid")) ?: "",
+                        toSsid = it.getString(it.getColumnIndexOrThrow("to_ssid")) ?: "",
+                        toBssid = it.getString(it.getColumnIndexOrThrow("to_bssid")) ?: "",
+                        fromTotalScore = it.getInt(it.getColumnIndexOrThrow("from_total_score")),
+                        toTotalScore = it.getInt(it.getColumnIndexOrThrow("to_total_score")),
+                        fromStabilityScore = it.getInt(it.getColumnIndexOrThrow("from_stability_score")),
+                        toStabilityScore = it.getInt(it.getColumnIndexOrThrow("to_stability_score")),
+                        accepted = it.getInt(it.getColumnIndexOrThrow("accepted")) == 1,
+                        connectSucceeded = if (it.isNull(it.getColumnIndexOrThrow("connect_succeeded"))) null
+                        else it.getInt(it.getColumnIndexOrThrow("connect_succeeded")) == 1,
+                    )
+                )
+            }
+        }
+        return rows
     }
 
     private fun trimScanHistory(db: SQLiteDatabase, maxRows: Int) {
@@ -232,6 +355,11 @@ class ResearchDatabase(context: Context) : SQLiteOpenHelper(context.applicationC
                         totalScore = it.getInt(it.getColumnIndexOrThrow("total_score")),
                         status = it.getString(it.getColumnIndexOrThrow("status")),
                         connected = it.getInt(it.getColumnIndexOrThrow("connected")) == 1,
+                        snrProxyScore = it.getInt(it.getColumnIndexOrThrow("snr_proxy_score")),
+                        switchTriggered = it.getInt(it.getColumnIndexOrThrow("switch_triggered")) == 1,
+                        switchAccepted = if (it.isNull(it.getColumnIndexOrThrow("switch_accepted"))) null
+                        else it.getInt(it.getColumnIndexOrThrow("switch_accepted")) == 1,
+                        cycleState = it.getString(it.getColumnIndexOrThrow("cycle_state")) ?: "MONITORING",
                     )
                 )
             }
@@ -305,15 +433,18 @@ class ResearchDatabase(context: Context) : SQLiteOpenHelper(context.applicationC
         val scans = getRecentScans(20000)
         val networks = getKnownNetworks()
         val weights = getWeights()
+        val switchEvents = getSwitchEvents(20000)
 
         val scanCsv = buildString {
-            appendLine("scan_id,timestamp,ssid,bssid,rssi_dbm,latency_ms,packet_loss_pct,signal_score,latency_score,packetloss_score,stability_score,total_score,status,connected")
+            appendLine("scan_id,timestamp,ssid,bssid,rssi_dbm,latency_ms,packet_loss_pct,signal_score,latency_score,packetloss_score,stability_score,snr_proxy_score,total_score,status,connected,switch_triggered,switch_accepted,cycle_state")
             scans.forEach { r ->
                 appendLine(
                     listOf(
                         r.scanId, csv(r.timestamp), csv(r.ssid), csv(r.bssid), r.rssiDbm, r.latencyMs,
                         r.packetLossPct, r.signalScore, r.latencyScore, r.packetlossScore, r.stabilityScore,
-                        r.totalScore, csv(r.status), if (r.connected) "TRUE" else "FALSE",
+                        r.snrProxyScore, r.totalScore, csv(r.status), if (r.connected) "TRUE" else "FALSE",
+                        if (r.switchTriggered) "TRUE" else "FALSE", csv(r.switchAccepted?.toString() ?: ""),
+                        csv(r.cycleState),
                     ).joinToString(",")
                 )
             }
@@ -338,10 +469,24 @@ class ResearchDatabase(context: Context) : SQLiteOpenHelper(context.applicationC
             }
         }
 
+        val switchEventsCsv = buildString {
+            appendLine("event_id,timestamp,from_ssid,from_bssid,to_ssid,to_bssid,from_total_score,to_total_score,from_stability_score,to_stability_score,accepted,connect_succeeded")
+            switchEvents.forEach { r ->
+                appendLine(
+                    listOf(
+                        r.eventId, csv(r.timestamp), csv(r.fromSsid), csv(r.fromBssid), csv(r.toSsid), csv(r.toBssid),
+                        r.fromTotalScore, r.toTotalScore, r.fromStabilityScore, r.toStabilityScore,
+                        if (r.accepted) "TRUE" else "FALSE", csv(r.connectSucceeded?.toString() ?: ""),
+                    ).joinToString(",")
+                )
+            }
+        }
+
         return mapOf(
             "ScanHistory" to scanCsv,
             "KnownNetworks" to networksCsv,
             "Weights" to weightsCsv,
+            "SwitchEvents" to switchEventsCsv,
         )
     }
 

@@ -74,4 +74,37 @@ object AppNotifications {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(alertNotificationId++, notification)
     }
+
+    const val SWITCH_RECOMMENDATION_NOTIFICATION_ID = 3001
+
+    /**
+     * The state machine cannot switch silently — Android always shows its own connect
+     * confirmation. This notification is the background-service equivalent: tapping it
+     * opens the app, which reads the pending recommendation back via
+     * `WifiMonitorPlugin.getPendingSwitchRecommendation()` and shows the in-app
+     * RecommendationModal for the actual accept/decline.
+     */
+    fun postSwitchRecommendation(context: Context, targetSsid: String) {
+        if (!hasPermission(context)) return
+        ensureChannels(context)
+
+        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+        val pendingIntent = launchIntent?.let {
+            android.app.PendingIntent.getActivity(
+                context, SWITCH_RECOMMENDATION_NOTIFICATION_ID, it,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+            )
+        }
+
+        val builder = NotificationCompat.Builder(context, ALERT_CHANNEL_ID)
+            .setContentTitle("Better WiFi nearby")
+            .setContentText("Your connection has been unstable. Switch to \"$targetSsid\"?")
+            .setSmallIcon(android.R.drawable.stat_sys_warning)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+        pendingIntent?.let { builder.setContentIntent(it) }
+
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(SWITCH_RECOMMENDATION_NOTIFICATION_ID, builder.build())
+    }
 }

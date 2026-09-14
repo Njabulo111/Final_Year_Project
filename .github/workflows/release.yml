@@ -1,0 +1,99 @@
+name: Build and release Android APK
+
+# Push a tag like `v2`, `v3`, ... to build a signed release APK and publish it as a
+# GitHub Release. UpdateChecker.kt on-device reads the tag's numeric suffix as the
+# app's versionCode, so the tag must be exactly "v" + that integer — nothing else
+# (no "v2.0", no "v2-beta") or the in-app updater will not recognize it.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   ANDROID_KEYSTORE_BASE64  - `base64 -w0 your.keystore` output
+#   ANDROID_KEYSTORE_PASSWORD
+#   ANDROID_KEY_ALIAS
+#   ANDROID_KEY_PASSWORD
+# These must match the keystore used for every previous release — signing with a
+# different key makes Android refuse the update as a "different app" and force an
+# uninstall, which defeats the whole point of this workflow.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive versionCode from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          CODE="${TAG#v}"
+          if ! [[ "$CODE" =~ ^[0-9]+$ ]]; then
+            echo "Tag '$TAG' is not 'v<integer>' (e.g. v2) — UpdateChecker.kt expects this exact format." >&2
+            exit 1
+          fi
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "name=$CODE.0" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Build web bundle
+        run: npm run build
+
+      - name: Sync web bundle into the Android shell
+        run: npx cap sync android
+
+      - name: Stamp versionCode/versionName into build.gradle
+        run: |
+          sed -i "s/versionCode [0-9]\+/versionCode ${{ steps.version.outputs.code }}/" android/app/build.gradle
+          sed -i "s/versionName \"[^\"]*\"/versionName \"${{ steps.version.outputs.name }}\"/" android/app/build.gradle
+
+      - name: Decode signing keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/release.keystore
+
+      - name: Write keystore.properties
+        run: |
+          cat > android/keystore.properties <<EOF
+          storeFile=release.keystore
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+
+      - name: Build signed release APK
+        working-directory: android
+        run: chmod +x gradlew && ./gradlew assembleRelease --no-daemon
+
+      - name: Locate APK
+        id: apk
+        run: |
+          APK_PATH=$(find android/app/build/outputs/apk/release -name '*.apk' | head -n1)
+          echo "path=$APK_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: WiFi Monitor v${{ steps.version.outputs.name }}
+          files: ${{ steps.apk.outputs.path }}
+          generate_release_notes: true
+
+      - name: Clean up signing material
+        if: always()
+        run: rm -f android/release.keystore android/keystore.properties
