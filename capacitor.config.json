@@ -1,0 +1,18 @@
+{
+  "appId": "com.wificongestion.app",
+  "appName": "WiFi Monitor",
+  "webDir": "dist",
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 3000,
+      "launchAutoHide": true,
+      "backgroundColor": "#ffffff",
+      "androidScaleType": "CENTER_CROP",
+      "showSpinner": true,
+      "androidSpinnerStyle": "large",
+      "spinnerColor": "#1f5fad",
+      "splashFullScreen": true,
+      "splashImmersive": true
+    }
+  }
+}

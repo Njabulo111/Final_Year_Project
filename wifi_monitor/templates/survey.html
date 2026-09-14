@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>RF Site Survey — WiFi Monitor</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; background: #f0f4f8; color: #2c2c2c; }
+    header { background: #1f5fad; color: white; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; }
+    header h1 { font-size: 1.1rem; }
+    header a { color: rgba(255,255,255,0.8); font-size: 0.85rem; text-decoration: none; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 16px; }
+    .controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+    .layer-btn { padding: 6px 14px; font-size: 0.8rem; border: 1px solid #1f5fad; border-radius: 20px; background: white; color: #1f5fad; cursor: pointer; }
+    .layer-btn.active { background: #1f5fad; color: white; }
+    .survey-wrap { display: grid; grid-template-columns: 1fr 300px; gap: 12px; }
+    .canvas-card { background: white; border-radius: 10px; border: 1px solid #dde4f0; overflow: hidden; position: relative; }
+    #heatCanvas { display: block; width: 100%; cursor: crosshair; }
+    .legend { display: flex; flex-wrap: wrap; gap: 10px; padding: 8px 12px; border-top: 1px solid #eee; background: #fafbfd; }
+    .legend-item { display: flex; align-items: center; gap: 5px; font-size: 0.75rem; color: #555; }
+    .swatch { width: 12px; height: 12px; border-radius: 2px; }
+    .sidebar { display: flex; flex-direction: column; gap: 10px; }
+    .info-card { background: white; border-radius: 10px; border: 1px solid #dde4f0; padding: 14px; }
+    .ap-item { padding: 8px 10px; border-radius: 8px; border: 1px solid #eee; margin-bottom: 6px; cursor: pointer; }
+    .ap-item.selected { border-color: #1f5fad; background: #eef4ff; }
+    .badge { display: inline-block; font-size: 0.7rem; font-weight: bold; padding: 2px 7px; border-radius: 20px; }
+    .good { background: #d4edda; color: #1a6b3a; }
+    .moderate { background: #fff3cd; color: #856404; }
+    .congested { background: #f8d7da; color: #721c24; }
+    #hover-info { position: absolute; bottom: 8px; left: 8px; background: rgba(30,40,70,0.88); color: white; font-size: 0.75rem; padding: 6px 10px; border-radius: 6px; pointer-events: none; display: none; }
+  </style>
+</head>
+<body>
+  <header><h1>RF Site Survey — WiFi Monitor</h1><a href="/">← Back to dashboard</a></header>
+  <div class="container">
+    <div class="controls">
+      <button class="layer-btn active" onclick="loadLayer('rssi', this)">RSSI Heatmap</button>
+      <button class="layer-btn" onclick="loadLayer('snr', this)">SNR Heatmap</button>
+      <button class="layer-btn" onclick="loadLayer('overlap', this)">Channel overlap</button>
+      <button class="layer-btn" onclick="loadLayer('coverage', this)">Coverage map</button>
+    </div>
+    <div class="survey-wrap">
+      <div class="canvas-card">
+        <canvas id="heatCanvas" width="680" height="400"></canvas>
+        <div id="hover-info"></div>
+        <div class="legend" id="legend"></div>
+      </div>
+      <div class="sidebar">
+        <div class="info-card"><h3>Access points</h3><div id="ap-list"></div></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const canvas = document.getElementById('heatCanvas');
+    const ctx = canvas.getContext('2d');
+    let currentLayer = 'rssi', selectedBSSID = null, lastData = null;
+
+    function getColor(layer, val) {
+      if (layer === 'rssi') {
+        if (val >= -50) return [26, 140, 62, 210];
+        if (val >= -70) return [220, 160, 0, 170];
+        return [180, 30, 20, 130];
+      }
+      return [100, 100, 100, 150];
+    }
+
+    function render(data) {
+      if (!data) return;
+      lastData = data;
+      const idata = ctx.createImageData(680, 400);
+      for (let r=0; r<data.grid.length; r++) {
+        for (let c=0; c<data.grid[r].length; c++) {
+          const col4 = getColor(data.layer, data.grid[r][c]);
+          for (let sy=0; sy<data.step; sy++) {
+            for (let sx=0; sx<data.step; sx++) {
+              const idx = ((r*data.step+sy)*680 + (c*data.step+sx))*4;
+              idata.data[idx]=col4[0]; idata.data[idx+1]=col4[1]; idata.data[idx+2]=col4[2]; idata.data[idx+3]=col4[3];
+            }
+          }
+        }
+      }
+      ctx.putImageData(idata, 0, 0);
+      data.ap_pixels.forEach(ap => {
+        ctx.beginPath(); ctx.arc(ap.px, ap.py, 10, 0, 7);
+        ctx.fillStyle = ap.is_connected ? '#1f5fad' : '#fff';
+        ctx.fill(); ctx.stroke();
+      });
+      const list = document.getElementById('ap-list');
+      list.innerHTML = data.ap_pixels.map(ap => `<div class="ap-item ${selectedBSSID===ap.id?'selected':''}" onclick="selectedBSSID='${ap.id}';render(lastData)">${ap.ssid || 'AP'} (${ap.rssi} dBm)</div>`).join('');
+    }
+
+    async function loadLayer(layer, btn) {
+      currentLayer = layer;
+      document.querySelectorAll('.layer-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const res = await fetch(`/api/heatmap?layer=${layer}`);
+      const data = await res.json();
+      render(data);
+    }
+    loadLayer('rssi', document.querySelector('.layer-btn.active'));
+  </script>
+</body>
+</html>

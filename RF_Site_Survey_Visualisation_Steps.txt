@@ -1,0 +1,1034 @@
+================================================================================
+  RF SITE SURVEY VISUALISATION — IMPLEMENTATION STEPS
+  WiFi Congestion Monitoring and Recommendation System
+  Student: NN Sibambo  |  223124407  |  University of Johannesburg
+================================================================================
+
+WHAT YOU LEARNED FROM NETSPOT
+-------------------------------
+NetSpot is a professional RF site survey tool. It teaches us:
+
+1. A HEATMAP is a colour-coded map of signal strength across a floor plan.
+   - Green  = excellent signal (≥ −50 dBm)
+   - Yellow = good signal    (−50 to −65 dBm)
+   - Orange = fair signal    (−65 to −75 dBm)
+   - Red    = weak / dead zone (worse than −75 dBm)
+
+2. A SITE SURVEY plots every AP's coverage zone on that map.
+   You can see which AP covers which area of the room.
+
+3. MULTIPLE VISUALISATION LAYERS exist:
+   - Signal strength (RSSI heatmap)
+   - Signal-to-noise ratio (SNR heatmap)
+   - Channel overlap / interference heatmap
+   - Coverage / dead zone map
+
+4. INSPECTOR MODE shows a table of all visible APs with live RSSI,
+   channel, band, SNR, and noise floor.
+
+5. The system shows DEAD ZONES — areas where no AP gives adequate signal.
+
+6. You can CLICK ON AN AP to isolate and highlight its coverage zone.
+
+YOUR SYSTEM WILL DO ALL OF THIS — built in Python + a browser dashboard.
+
+
+WHAT YOUR VISUALISATION FEATURE WILL DO
+-----------------------------------------
+- Draw a 2D floor plan of the room/lab (user draws it with a simple editor
+  or uses a default grid).
+- Overlay a real-time colour heatmap based on live RSSI readings
+  from scanner.py.
+- Place each AP as a dot on the map at its known or estimated position.
+- Show 4 switchable heatmap layers: RSSI, SNR, channel overlap, coverage.
+- Show a live inspector table: all APs, RSSI, channel, band, score.
+- Highlight the currently connected AP with a star (★).
+- Show dead zones in red.
+- Allow the user to click any AP to see only that AP's coverage zone.
+- Hover over any point to see the exact RSSI and estimated distance
+  from each AP at that point.
+- Update automatically every scan cycle (every 10 seconds).
+
+
+================================================================================
+PART A — NEW FILES TO CREATE
+================================================================================
+
+After this feature, your project folder will be:
+
+wifi_monitor/
+├── app.py                    ← MODIFIED: new /api/heatmap route
+├── scanner.py                ← unchanged
+├── tester.py                 ← unchanged
+├── scorer.py                 ← unchanged
+├── database.py               ← unchanged
+├── locator.py                ← already created in previous guide
+├── switcher.py               ← already created in previous guide
+├── config.py                 ← MODIFIED: add AP_POSITIONS, floor plan size
+├── heatmap_engine.py         ← NEW: computes RSSI grid, SNR grid, overlap grid
+├── requirements.txt          ← unchanged (no new libraries needed)
+└── templates/
+    ├── dashboard.html        ← MODIFIED: add heatmap tab
+    └── survey.html           ← NEW: dedicated full RF site survey page
+
+
+================================================================================
+PART B — config.py ADDITIONS
+================================================================================
+
+Add these new settings to your existing config.py:
+
+    # ─── Floor plan settings ───────────────────────────────────────────
+    # Grid resolution: how many metres each pixel represents
+    # Lower number = more detailed but slower to compute
+    HEATMAP_GRID_SIZE = 0.5       # 0.5 metres per pixel
+
+    # Floor plan dimensions in metres
+    FLOOR_WIDTH_M  = 20.0         # width of your lab in metres
+    FLOOR_HEIGHT_M = 12.0         # height of your lab in metres
+
+    # Path loss model (same as locator.py)
+    RSSI_AT_1M         = -40      # calibrate by standing 1m from an AP
+    PATH_LOSS_EXPONENT = 2.7      # 2.7 for indoor lab
+
+    # Wall attenuation — signal loss through each wall type (dBm)
+    WALL_ATTENUATION = {
+        "concrete": 12,
+        "brick":     8,
+        "drywall":   4,
+        "glass":     2,
+        "none":      0,
+    }
+
+    # Default wall type in your lab
+    DEFAULT_WALL_TYPE = "drywall"
+
+    # ─── AP positions on the floor plan (in metres from top-left corner) ─
+    # HOW TO MEASURE:
+    #   Stand at the top-left corner of your lab.
+    #   Walk to each AP. Count your steps.
+    #   Average step = 0.75 metres.
+    #   Update these values with your real measurements.
+    AP_POSITIONS = {
+        "AA:11:22:33:44:01": {
+            "label": "AP-Lab-North",
+            "wall":  "north",
+            "x_m":   3.0,          # metres from left wall
+            "y_m":   1.0,          # metres from top wall
+        },
+        "AA:11:22:33:44:02": {
+            "label": "AP-Lab-East",
+            "wall":  "east",
+            "x_m":   18.0,
+            "y_m":   2.5,
+        },
+        "AA:11:22:33:44:03": {
+            "label": "AP-Lab-South",
+            "wall":  "south",
+            "x_m":   15.0,
+            "y_m":   11.0,
+        },
+        "AA:11:22:33:44:04": {
+            "label": "AP-Lab-West",
+            "wall":  "west",
+            "x_m":   2.0,
+            "y_m":   9.0,
+        },
+    }
+
+    # ─── Wall definitions (line segments on the floor plan, in metres) ──
+    # Each wall is: [x1_m, y1_m, x2_m, y2_m]
+    # These are internal walls only — outer walls are assumed always present.
+    INTERNAL_WALLS = [
+        [10.0, 0.0, 10.0, 6.0],     # vertical divider, left half
+        [10.0, 6.0, 20.0, 6.0],     # horizontal divider, right half
+        [5.0,  6.0, 5.0, 12.0],     # small partition on west side
+    ]
+
+
+================================================================================
+PART C — heatmap_engine.py (THE COMPUTATION ENGINE)
+================================================================================
+
+Create a new file called heatmap_engine.py.
+This file computes all the data that the heatmap visualisation needs.
+It does NOT do any drawing — that is done by the browser (JavaScript + Canvas).
+
+--- FILE: heatmap_engine.py ---
+
+import math
+import config
+from typing import List, Dict, Any
+
+
+def metres_to_pixels(x_m: float, y_m: float) -> tuple:
+    """
+    Convert real-world metres to pixel coordinates on the heatmap canvas.
+    Canvas is always rendered at a standard size (e.g. 680x400 pixels).
+    The floor plan is scaled to fit.
+    """
+    canvas_w = 680
+    canvas_h = 400
+    px_per_m_x = canvas_w / config.FLOOR_WIDTH_M
+    px_per_m_y = canvas_h / config.FLOOR_HEIGHT_M
+    return (round(x_m * px_per_m_x), round(y_m * px_per_m_y))
+
+
+def pixels_to_metres(px: int, py: int) -> tuple:
+    """Convert pixel coordinates back to metres."""
+    canvas_w = 680
+    canvas_h = 400
+    x_m = px * (config.FLOOR_WIDTH_M / canvas_w)
+    y_m = py * (config.FLOOR_HEIGHT_M / canvas_h)
+    return (round(x_m, 2), round(y_m, 2))
+
+
+def rssi_at_point(ap_x_m: float, ap_y_m: float, ap_rssi_1m: float,
+                  px_m: float, py_m: float, n: float = None) -> float:
+    """
+    Estimate RSSI at point (px_m, py_m) from an AP at (ap_x_m, ap_y_m).
+    Uses the Log-Distance Path Loss model:
+        RSSI(d) = RSSI_1m - 10 * n * log10(d)
+
+    Args:
+        ap_x_m, ap_y_m : AP position in metres
+        ap_rssi_1m     : RSSI measured at 1 metre from this AP (config.RSSI_AT_1M)
+        px_m, py_m     : point to estimate at
+        n              : path loss exponent
+
+    Returns: estimated RSSI in dBm (float)
+    """
+    if n is None:
+        n = config.PATH_LOSS_EXPONENT
+
+    dx = px_m - ap_x_m
+    dy = py_m - ap_y_m
+    d  = math.sqrt(dx*dx + dy*dy)
+    if d < 0.1:
+        d = 0.1   # minimum distance to avoid log(0)
+
+    rssi = ap_rssi_1m - 10.0 * n * math.log10(d)
+    return max(-100.0, min(-10.0, rssi))
+
+
+def wall_attenuation(ap_x_m: float, ap_y_m: float,
+                     px_m: float, py_m: float) -> float:
+    """
+    Calculate total signal loss from internal walls between AP and point.
+    For each wall the line-of-sight crosses, subtract the wall attenuation.
+
+    Returns: total attenuation in dBm (positive number = signal reduction)
+    """
+    atten_per_wall = config.WALL_ATTENUATION.get(
+        config.DEFAULT_WALL_TYPE, 4
+    )
+    total = 0.0
+    for wall in getattr(config, 'INTERNAL_WALLS', []):
+        x1, y1, x2, y2 = wall
+        if _lines_intersect(ap_x_m, ap_y_m, px_m, py_m, x1, y1, x2, y2):
+            total += atten_per_wall
+    return total
+
+
+def _lines_intersect(ax, ay, bx, by, cx, cy, dx, dy) -> bool:
+    """Check if line segment AB intersects line segment CD."""
+    d1x, d1y = bx - ax, by - ay
+    d2x, d2y = dx - cx, dy - cy
+    cross = d1x * d2y - d1y * d2x
+    if abs(cross) < 1e-10:
+        return False
+    t = ((cx - ax) * d2y - (cy - ay) * d2x) / cross
+    u = ((cx - ax) * d1y - (cy - ay) * d1x) / cross
+    return 0 < t < 1 and 0 < u < 1
+
+
+def compute_heatmap_grid(ap_data: list, layer: str = 'rssi') -> dict:
+    """
+    Compute the full heatmap grid for the dashboard.
+
+    This function runs once per scan cycle and returns a JSON-serialisable
+    dict that the browser uses to draw the canvas heatmap.
+
+    Args:
+        ap_data : list of AP dicts from scanner.py with positions from config
+        layer   : 'rssi' | 'snr' | 'overlap' | 'coverage'
+
+    Returns:
+        {
+            "grid":    [[value, ...], ...],   # 2D array of floats
+            "min_val": float,
+            "max_val": float,
+            "layer":   str,
+            "ap_pixels": [{"id":..,"px":..,"py":..,"rssi":..,"ch":..}, ...],
+            "walls_px":  [[x1,y1,x2,y2], ...],
+            "dead_zones": int,
+            "coverage_pct": float,
+        }
+    """
+    canvas_w = 680
+    canvas_h = 400
+    step     = 8   # compute every 8th pixel (fast); interpolate in JS
+
+    # Map BSSID → position from config.AP_POSITIONS
+    positions = getattr(config, 'AP_POSITIONS', {})
+
+    # Build enriched AP list (only APs we have positions for)
+    enriched_aps = []
+    for ap in ap_data:
+        bssid = ap.get('bssid', '')
+        pos   = positions.get(bssid)
+        if pos:
+            enriched_aps.append({
+                **ap,
+                'x_m': pos['x_m'],
+                'y_m': pos['y_m'],
+                'label': pos.get('label', ap.get('ssid', bssid)),
+            })
+
+    # If no positions configured, place APs evenly across the map
+    if not enriched_aps:
+        n = len(ap_data)
+        for i, ap in enumerate(ap_data):
+            enriched_aps.append({
+                **ap,
+                'x_m': (i + 1) * config.FLOOR_WIDTH_M / (n + 1),
+                'y_m': config.FLOOR_HEIGHT_M / 2,
+                'label': ap.get('ssid', 'AP'),
+            })
+
+    # Build grid
+    rows = canvas_h // step
+    cols = canvas_w // step
+    grid = []
+    dead_zones = 0
+    covered    = 0
+    total      = 0
+
+    for row in range(rows):
+        grid_row = []
+        for col in range(cols):
+            px = col * step + step // 2
+            py = row * step + step // 2
+            x_m, y_m = pixels_to_metres(px, py)
+
+            if layer == 'rssi':
+                # Best RSSI from any AP at this point
+                best = -999.0
+                for ap in enriched_aps:
+                    r = rssi_at_point(
+                        ap['x_m'], ap['y_m'],
+                        config.RSSI_AT_1M,
+                        x_m, y_m
+                    ) - wall_attenuation(ap['x_m'], ap['y_m'], x_m, y_m)
+                    if r > best:
+                        best = r
+                val = round(best, 1)
+
+            elif layer == 'snr':
+                # SNR = RSSI - noise floor. Noise floor ≈ -95 dBm typical indoor
+                noise_floor = -95.0
+                best = -999.0
+                for ap in enriched_aps:
+                    r = rssi_at_point(
+                        ap['x_m'], ap['y_m'],
+                        config.RSSI_AT_1M, x_m, y_m
+                    ) - wall_attenuation(ap['x_m'], ap['y_m'], x_m, y_m)
+                    if r > best:
+                        best = r
+                val = round(best - noise_floor, 1)   # SNR in dB
+
+            elif layer == 'overlap':
+                # Count how many APs have detectable signal (> -80 dBm)
+                # and check if any share a channel within 5 channels of each other
+                visible_channels = []
+                for ap in enriched_aps:
+                    r = rssi_at_point(
+                        ap['x_m'], ap['y_m'],
+                        config.RSSI_AT_1M, x_m, y_m
+                    ) - wall_attenuation(ap['x_m'], ap['y_m'], x_m, y_m)
+                    if r > -80:
+                        visible_channels.append(ap.get('channel', 0))
+                # Count conflicts: channels within 5 of each other are overlapping
+                conflicts = 0
+                for i, ch1 in enumerate(visible_channels):
+                    for ch2 in visible_channels[i+1:]:
+                        if ch1 != ch2 and abs(ch1 - ch2) < 5:
+                            conflicts += 1
+                val = float(conflicts)
+
+            else:  # coverage
+                best = -999.0
+                for ap in enriched_aps:
+                    r = rssi_at_point(
+                        ap['x_m'], ap['y_m'],
+                        config.RSSI_AT_1M, x_m, y_m
+                    ) - wall_attenuation(ap['x_m'], ap['y_m'], x_m, y_m)
+                    if r > best:
+                        best = r
+                val = round(best, 1)
+
+            grid_row.append(val)
+            total += 1
+
+            # Stats
+            if layer in ('rssi', 'coverage'):
+                if val < -85:
+                    dead_zones += 1
+                if val >= -70:
+                    covered += 1
+
+        grid.append(grid_row)
+
+    coverage_pct = round((covered / total * 100), 1) if total > 0 else 0.0
+
+    # AP pixel positions for markers
+    ap_pixels = []
+    for ap in enriched_aps:
+        px, py = metres_to_pixels(ap['x_m'], ap['y_m'])
+        rssi_here = rssi_at_point(
+            ap['x_m'], ap['y_m'],
+            config.RSSI_AT_1M,
+            ap['x_m'], ap['y_m']
+        )
+        ap_pixels.append({
+            "id":         ap.get('bssid', ''),
+            "label":      ap.get('label', ''),
+            "ssid":       ap.get('ssid', ''),
+            "px":         px,
+            "py":         py,
+            "rssi":       round(ap.get('rssi', -70), 1),
+            "channel":    ap.get('channel', 0),
+            "band":       ap.get('band', ''),
+            "score":      ap.get('score', 0),
+            "status":     ap.get('status', ''),
+            "is_connected": ap.get('is_connected', False),
+        })
+
+    # Wall pixel coordinates
+    walls_px = []
+    for wall in getattr(config, 'INTERNAL_WALLS', []):
+        x1_m, y1_m, x2_m, y2_m = wall
+        x1p, y1p = metres_to_pixels(x1_m, y1_m)
+        x2p, y2p = metres_to_pixels(x2_m, y2_m)
+        walls_px.append([x1p, y1p, x2p, y2p])
+
+    return {
+        "grid":         grid,
+        "step":         step,
+        "canvas_w":     canvas_w,
+        "canvas_h":     canvas_h,
+        "layer":        layer,
+        "min_val":      min(min(r) for r in grid),
+        "max_val":      max(max(r) for r in grid),
+        "ap_pixels":    ap_pixels,
+        "walls_px":     walls_px,
+        "dead_zones":   dead_zones,
+        "coverage_pct": coverage_pct,
+        "total_aps":    len(enriched_aps),
+    }
+
+--- END FILE ---
+
+
+================================================================================
+PART D — ADD /api/heatmap ROUTE TO app.py
+================================================================================
+
+Open app.py. Add this import at the top:
+
+    from heatmap_engine import compute_heatmap_grid
+
+Add this route:
+
+    @app.route('/api/heatmap')
+    def api_heatmap():
+        """
+        Returns heatmap grid data for the survey page.
+        Query param: layer = rssi | snr | overlap | coverage
+        Example: /api/heatmap?layer=rssi
+        """
+        from flask import request as req
+        layer = req.args.get('layer', 'rssi')
+
+        # Get latest AP data from the scan loop
+        with latest_lock:
+            ap_list = latest_data.get('aps', [])
+
+        if not ap_list:
+            return jsonify({"error": "No scan data yet. Wait for first scan."}), 503
+
+        grid_data = compute_heatmap_grid(ap_list, layer)
+        return jsonify(grid_data)
+
+
+================================================================================
+PART E — CREATE templates/survey.html (THE SITE SURVEY PAGE)
+================================================================================
+
+Create a new file: templates/survey.html
+This is a dedicated full-page RF site survey visualisation.
+The heatmap is drawn using HTML5 Canvas — no extra libraries needed.
+
+--- FILE: templates/survey.html ---
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>RF Site Survey — WiFi Monitor</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; background: #f0f4f8; color: #2c2c2c; }
+
+    header {
+      background: #1f5fad; color: white;
+      padding: 12px 20px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    header h1 { font-size: 1.1rem; }
+    header a  { color: rgba(255,255,255,0.8); font-size: 0.85rem; text-decoration: none; }
+    header a:hover { color: white; }
+
+    .container { max-width: 1200px; margin: 0 auto; padding: 16px; }
+
+    .controls {
+      display: flex; gap: 8px; flex-wrap: wrap;
+      align-items: center; margin-bottom: 12px;
+    }
+    .controls label { font-size: 0.85rem; color: #555; }
+    .layer-btn {
+      padding: 6px 14px; font-size: 0.8rem;
+      border: 1px solid #1f5fad; border-radius: 20px;
+      background: white; color: #1f5fad; cursor: pointer;
+    }
+    .layer-btn.active {
+      background: #1f5fad; color: white;
+    }
+    .rescan-btn {
+      padding: 6px 14px; font-size: 0.8rem;
+      border: 1px solid #888; border-radius: 20px;
+      background: white; color: #555; cursor: pointer;
+      margin-left: auto;
+    }
+
+    .survey-wrap {
+      display: grid;
+      grid-template-columns: 1fr 300px;
+      gap: 12px;
+    }
+    @media (max-width: 900px) {
+      .survey-wrap { grid-template-columns: 1fr; }
+    }
+
+    .canvas-card {
+      background: white; border-radius: 10px;
+      border: 1px solid #dde4f0; overflow: hidden;
+      position: relative;
+    }
+    #heatCanvas { display: block; width: 100%; cursor: crosshair; }
+
+    .legend {
+      display: flex; flex-wrap: wrap; gap: 10px;
+      padding: 8px 12px; border-top: 1px solid #eee;
+      background: #fafbfd;
+    }
+    .legend-item {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 0.75rem; color: #555;
+    }
+    .swatch { width: 12px; height: 12px; border-radius: 2px; }
+
+    .sidebar { display: flex; flex-direction: column; gap: 10px; }
+
+    .info-card {
+      background: white; border-radius: 10px;
+      border: 1px solid #dde4f0; padding: 14px;
+    }
+    .info-card h3 { font-size: 0.85rem; color: #888; margin-bottom: 10px;
+                    text-transform: uppercase; letter-spacing: 0.04em; }
+
+    .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .stat-box { background: #f5f7fb; border-radius: 6px; padding: 8px; text-align: center; }
+    .stat-val { font-size: 1.3rem; font-weight: bold; color: #1f5fad; }
+    .stat-label { font-size: 0.7rem; color: #888; margin-top: 2px; }
+
+    .ap-item {
+      padding: 8px 10px; border-radius: 8px;
+      border: 1px solid #eee; margin-bottom: 6px;
+      cursor: pointer; transition: border-color .15s;
+    }
+    .ap-item:hover { border-color: #1f5fad; }
+    .ap-item.selected { border-color: #1f5fad; background: #eef4ff; }
+    .ap-item-name { font-size: 0.85rem; font-weight: bold; color: #2c2c2c; }
+    .ap-item-meta { font-size: 0.75rem; color: #888; margin-top: 3px; }
+    .badge {
+      display: inline-block; font-size: 0.7rem; font-weight: bold;
+      padding: 2px 7px; border-radius: 20px;
+    }
+    .good     { background: #d4edda; color: #1a6b3a; }
+    .moderate { background: #fff3cd; color: #856404; }
+    .congested{ background: #f8d7da; color: #721c24; }
+
+    .score-bar-wrap { height: 4px; background: #eee; border-radius: 2px; margin-top: 4px; }
+    .score-bar-fill { height: 100%; border-radius: 2px; }
+
+    #hover-info {
+      position: absolute; bottom: 8px; left: 8px;
+      background: rgba(30,40,70,0.88); color: white;
+      font-size: 0.75rem; padding: 6px 10px; border-radius: 6px;
+      line-height: 1.7; pointer-events: none;
+      display: none;
+    }
+
+    .timestamp { font-size: 0.75rem; color: #aaa; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>RF Site Survey — Intelligent WiFi Monitor</h1>
+    <a href="/">← Back to dashboard</a>
+  </header>
+
+  <div class="container">
+    <div class="controls">
+      <label>Heatmap layer:</label>
+      <button class="layer-btn active" onclick="loadLayer('rssi', this)">Signal strength (RSSI)</button>
+      <button class="layer-btn"        onclick="loadLayer('snr',  this)">Signal-to-noise ratio</button>
+      <button class="layer-btn"        onclick="loadLayer('overlap', this)">Channel overlap</button>
+      <button class="layer-btn"        onclick="loadLayer('coverage', this)">Coverage map</button>
+      <button class="rescan-btn"       onclick="loadLayer(currentLayer, document.querySelector('.layer-btn.active'))">
+        ↻ Refresh
+      </button>
+    </div>
+
+    <div class="survey-wrap">
+      <div class="canvas-card">
+        <canvas id="heatCanvas" width="680" height="400"></canvas>
+        <div id="hover-info"></div>
+        <div class="legend" id="legend"></div>
+      </div>
+
+      <div class="sidebar">
+        <div class="info-card">
+          <h3>Survey statistics</h3>
+          <div class="stat-grid">
+            <div class="stat-box">
+              <div class="stat-val" id="s-aps">—</div>
+              <div class="stat-label">APs on network</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-val" id="s-cov">—</div>
+              <div class="stat-label">Coverage ≥ −70 dBm</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-val" id="s-dead">—</div>
+              <div class="stat-label">Dead zone cells</div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-val" id="s-layer">RSSI</div>
+              <div class="stat-label">Active layer</div>
+            </div>
+          </div>
+          <p class="timestamp" id="ts">Waiting for scan...</p>
+        </div>
+
+        <div class="info-card">
+          <h3>Access points — click to isolate</h3>
+          <div id="ap-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('heatCanvas');
+    const ctx    = canvas.getContext('2d');
+    const W = 680, H = 400;
+
+    let currentLayer = 'rssi';
+    let selectedBSSID = null;
+    let lastData = null;
+
+    // ── Colour functions ──────────────────────────────────────────────
+    function rssiToColor(v) {
+      if (v >= -50) return [26,  140,  62,  210];
+      if (v >= -60) return [100, 180,  20,  190];
+      if (v >= -70) return [220, 160,   0,  170];
+      if (v >= -80) return [210,  70,   0,  150];
+      if (v >= -90) return [180,  30,  20,  130];
+      return                 [80,  10,  10,   80];
+    }
+    function snrToColor(v) {
+      if (v >= 35) return [26, 140, 62, 200];
+      if (v >= 25) return [100,180, 20, 180];
+      if (v >= 15) return [220,160,  0, 160];
+      return              [180, 30, 20, 130];
+    }
+    function overlapToColor(v) {
+      if (v === 0) return [26, 140, 62, 160];
+      if (v === 1) return [220,160,  0, 170];
+      return              [180, 30, 20, 180];
+    }
+    function coverageToColor(v) {
+      return v >= -70
+        ? [26, 140, 62, 160]
+        : [180, 30, 20, 150];
+    }
+    function pickColor(layer, val) {
+      if (layer === 'rssi')     return rssiToColor(val);
+      if (layer === 'snr')      return snrToColor(val);
+      if (layer === 'overlap')  return overlapToColor(val);
+      return coverageToColor(val);
+    }
+
+    // ── Draw heatmap from grid data ──────────────────────────────────
+    function drawHeatmap(data) {
+      const grid  = data.grid;
+      const step  = data.step;
+      const layer = data.layer;
+      const idata = ctx.createImageData(W, H);
+      const d     = idata.data;
+
+      for (let row = 0; row < grid.length; row++) {
+        for (let col = 0; col < grid[row].length; col++) {
+          const val = grid[row][col];
+          const col4 = pickColor(layer, val);
+          const px0  = col * step;
+          const py0  = row * step;
+          for (let sy = 0; sy < step && py0+sy < H; sy++) {
+            for (let sx = 0; sx < step && px0+sx < W; sx++) {
+              const idx = ((py0+sy)*W + (px0+sx))*4;
+              d[idx]   = col4[0];
+              d[idx+1] = col4[1];
+              d[idx+2] = col4[2];
+              d[idx+3] = col4[3];
+            }
+          }
+        }
+      }
+      ctx.putImageData(idata, 0, 0);
+    }
+
+    // ── Draw walls ───────────────────────────────────────────────────
+    function drawWalls(walls) {
+      ctx.strokeStyle = 'rgba(40,55,100,0.55)';
+      ctx.lineWidth   = 2;
+      for (const [x1,y1,x2,y2] of walls) {
+        ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+      }
+      // Outer boundary
+      ctx.strokeStyle = 'rgba(40,55,100,0.8)';
+      ctx.lineWidth = 2.5;
+      ctx.strokeRect(1, 1, W-2, H-2);
+    }
+
+    // ── Draw AP markers ──────────────────────────────────────────────
+    function drawAPs(aps) {
+      for (const ap of aps) {
+        const sel = selectedBSSID === ap.id;
+        const sz  = sel ? 15 : 11;
+
+        ctx.beginPath();
+        ctx.arc(ap.px, ap.py, sz, 0, Math.PI*2);
+        ctx.fillStyle = ap.is_connected ? '#1f5fad' : (sel ? '#1a8c3e' : 'rgba(255,255,255,0.92)');
+        ctx.fill();
+        ctx.strokeStyle = ap.is_connected ? '#0d3a7a' : '#1f5fad';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillStyle   = (ap.is_connected || sel) ? '#fff' : '#1f5fad';
+        ctx.font        = '9px Arial';
+        ctx.textAlign   = 'center';
+        ctx.textBaseline= 'middle';
+        ctx.fillText(ap.label || ap.id.slice(-4), ap.px, ap.py);
+
+        if (ap.is_connected) {
+          ctx.fillStyle = '#fff';
+          ctx.font = '10px Arial';
+          ctx.fillText('★', ap.px + sz + 2, ap.py - sz + 2);
+        }
+      }
+      ctx.textBaseline = 'alphabetic';
+    }
+
+    // ── Render AP list sidebar ───────────────────────────────────────
+    function renderAPList(aps) {
+      const list = document.getElementById('ap-list');
+      list.innerHTML = '';
+      for (const ap of aps) {
+        const cls = ap.status === 'GOOD' ? 'good' :
+                    ap.status === 'MODERATE' ? 'moderate' : 'congested';
+        const div = document.createElement('div');
+        div.className = 'ap-item' + (selectedBSSID === ap.id ? ' selected' : '');
+        div.innerHTML = `
+          <div class="ap-item-name">${ap.label || ap.ssid}
+            ${ap.is_connected ? '<span style="font-size:0.7rem;color:#1f5fad"> ★ connected</span>' : ''}
+          </div>
+          <div class="ap-item-meta">
+            Ch ${ap.channel} · ${ap.band} · ${ap.rssi} dBm
+            <span class="badge ${cls}">${ap.status}</span>
+          </div>
+          <div class="score-bar-wrap">
+            <div class="score-bar-fill" style="width:${ap.score}%;
+              background:${cls==='good'?'#1a8c3e':cls==='moderate'?'#f0a500':'#c0392b'}">
+            </div>
+          </div>
+          <div style="font-size:0.7rem;color:#aaa;margin-top:2px">Score: ${ap.score}/100</div>`;
+        div.onclick = () => {
+          selectedBSSID = (selectedBSSID === ap.id) ? null : ap.id;
+          renderAll(lastData);
+        };
+        list.appendChild(div);
+      }
+    }
+
+    // ── Update stats ─────────────────────────────────────────────────
+    function updateStats(data) {
+      document.getElementById('s-aps').textContent  = data.total_aps;
+      document.getElementById('s-cov').textContent  = data.coverage_pct + '%';
+      document.getElementById('s-dead').textContent = data.dead_zones;
+      document.getElementById('s-layer').textContent = data.layer.toUpperCase();
+      document.getElementById('ts').textContent =
+        'Last update: ' + new Date().toLocaleTimeString();
+    }
+
+    // ── Update legend ────────────────────────────────────────────────
+    function updateLegend(layer) {
+      const defs = {
+        rssi: [
+          ['#1a8c3e','≥ −50 dBm — excellent'],
+          ['#64b412','−50 to −65 — good'],
+          ['#dca000','−65 to −75 — fair'],
+          ['#d24000','−75 to −85 — weak'],
+          ['#b42020','< −85 — dead zone'],
+        ],
+        snr: [
+          ['#1a8c3e','≥ 35 dB — excellent'],
+          ['#64b412','25–35 dB — good'],
+          ['#dca000','15–25 dB — fair'],
+          ['#b42020','< 15 dB — poor'],
+        ],
+        overlap: [
+          ['#1a8c3e','No conflict'],
+          ['#dca000','Minor overlap'],
+          ['#b42020','Channel conflict'],
+        ],
+        coverage: [
+          ['#1a8c3e','Covered (≥ −70 dBm)'],
+          ['#b42020','Dead zone (< −70 dBm)'],
+        ],
+      };
+      const leg = document.getElementById('legend');
+      leg.innerHTML = (defs[layer] || defs.rssi)
+        .map(([c,t]) => `<div class="legend-item">
+          <div class="swatch" style="background:${c}"></div>${t}
+        </div>`).join('') +
+        '<div class="legend-item" style="margin-left:auto;font-style:italic;color:#aaa">Hover for exact values</div>';
+    }
+
+    // ── Render everything ─────────────────────────────────────────────
+    function renderAll(data) {
+      if (!data) return;
+      lastData = data;
+      drawHeatmap(data);
+      drawWalls(data.walls_px || []);
+      drawAPs(data.ap_pixels || []);
+      renderAPList(data.ap_pixels || []);
+      updateStats(data);
+      updateLegend(data.layer);
+    }
+
+    // ── Hover: show values at mouse position ─────────────────────────
+    canvas.addEventListener('mousemove', e => {
+      if (!lastData || !lastData.grid) return;
+      const rect  = canvas.getBoundingClientRect();
+      const scaleX = W / rect.width;
+      const scaleY = H / rect.height;
+      const mx = Math.round((e.clientX - rect.left) * scaleX);
+      const my = Math.round((e.clientY - rect.top)  * scaleY);
+      const step = lastData.step;
+      const col  = Math.floor(mx / step);
+      const row  = Math.floor(my / step);
+
+      const grid = lastData.grid;
+      if (row < 0 || row >= grid.length || col < 0 || col >= grid[0].length) return;
+
+      const val = grid[row][col];
+      const layer = lastData.layer;
+      let label;
+      if      (layer === 'rssi')     label = `RSSI: ${Math.round(val)} dBm`;
+      else if (layer === 'snr')      label = `SNR: ${Math.round(val)} dB`;
+      else if (layer === 'overlap')  label = `Channel conflicts: ${Math.round(val)}`;
+      else                           label = `RSSI: ${Math.round(val)} dBm`;
+
+      // Estimate distance from closest AP
+      let closest = null, minDist = Infinity;
+      for (const ap of (lastData.ap_pixels || [])) {
+        const d = Math.sqrt((mx-ap.px)**2 + (my-ap.py)**2);
+        if (d < minDist) { minDist = d; closest = ap; }
+      }
+      const pixPerM = W / 20.0;  // approx: 20m wide floor
+      const distM   = Math.round(minDist / pixPerM * 10) / 10;
+
+      const info = document.getElementById('hover-info');
+      info.style.display = 'block';
+      info.innerHTML = `${label}<br>Nearest AP: ${closest ? closest.label : '—'} (~${distM}m)`;
+    });
+    canvas.addEventListener('mouseleave', () => {
+      document.getElementById('hover-info').style.display = 'none';
+    });
+
+    // ── Load data from API ────────────────────────────────────────────
+    async function loadLayer(layer, btn) {
+      currentLayer = layer;
+      document.querySelectorAll('.layer-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      try {
+        const res  = await fetch(`/api/heatmap?layer=${layer}`);
+        const data = await res.json();
+        if (data.error) {
+          alert(data.error);
+          return;
+        }
+        renderAll(data);
+      } catch(e) {
+        console.error('Heatmap load error:', e);
+      }
+    }
+
+    // Auto-refresh every 15 seconds
+    setInterval(() => loadLayer(currentLayer, document.querySelector('.layer-btn.active')), 15000);
+
+    // Initial load
+    loadLayer('rssi', document.querySelector('.layer-btn.active'));
+  </script>
+</body>
+</html>
+
+--- END FILE ---
+
+
+================================================================================
+PART F — ADD SURVEY LINK TO app.py
+================================================================================
+
+In app.py, add this route so the survey page is accessible:
+
+    @app.route('/survey')
+    def survey():
+        """Dedicated RF site survey page."""
+        return render_template('survey.html')
+
+Then in dashboard.html, add a link in the header:
+
+    <a href="/survey" style="color:rgba(255,255,255,0.8);font-size:0.85rem;
+       text-decoration:none;margin-left:16px;">
+       RF Site Survey ↗
+    </a>
+
+
+================================================================================
+PART G — HOW TO MEASURE YOUR LAB AND SET UP AP POSITIONS
+================================================================================
+
+For the heatmap to be accurate, you must tell the system WHERE each AP is.
+
+STEP 1 — Get a rough floor plan
+  Measure your lab length and width with a tape measure (or count steps).
+  Update in config.py:
+      FLOOR_WIDTH_M  = (your lab width in metres)
+      FLOOR_HEIGHT_M = (your lab height in metres)
+
+STEP 2 — Find each AP's BSSID
+  Run the system and look at the dashboard.
+  Note each BSSID and give it a name (AP-North, AP-East, etc.)
+
+STEP 3 — Measure AP position from top-left corner
+  Stand in the top-left corner of your lab.
+  Count paces to the wall where each AP is mounted.
+  1 pace ≈ 0.75 m. Multiply to get metres.
+  Update AP_POSITIONS in config.py with real BSSIDs and real x_m, y_m values.
+
+STEP 4 — Map internal walls
+  If your lab has partitions or dividing walls, add them to INTERNAL_WALLS
+  in config.py as line segments in metres.
+  These will appear as dark lines on the heatmap and affect signal propagation.
+
+STEP 5 — Calibrate RSSI_AT_1M
+  Stand exactly 1 metre from any AP.
+  Note the RSSI from your dashboard for that AP.
+  Set RSSI_AT_1M = that value in config.py.
+  This makes the heatmap distance estimates accurate.
+
+
+================================================================================
+PART H — WHAT EACH HEATMAP LAYER SHOWS (FOR YOUR REPORT)
+================================================================================
+
+LAYER 1 — SIGNAL STRENGTH (RSSI)
+  Shows the strongest signal available at every point in the room.
+  Green = strong (≥ −50 dBm) → excellent connection.
+  Red   = weak (< −85 dBm)   → dead zone, no usable signal.
+  Use this to identify coverage gaps and where students will get slow WiFi.
+
+LAYER 2 — SIGNAL-TO-NOISE RATIO (SNR)
+  SNR = RSSI minus noise floor (typically −95 dBm indoors).
+  High SNR = data can be decoded reliably = fast speeds.
+  Low SNR  = signal is buried in noise  = errors, retransmissions, slow speeds.
+  Use this to identify areas of high interference even if RSSI looks ok.
+
+LAYER 3 — CHANNEL OVERLAP
+  WiFi channels on 2.4 GHz are 20 MHz wide but spaced 5 MHz apart.
+  Only channels 1, 6, and 11 are truly non-overlapping.
+  If two APs both use channel 6, they interfere with each other.
+  Red areas = channel conflict zone = both APs compete for the same spectrum.
+  This is a direct cause of congestion independent of signal strength.
+  Use this to show your supervisor a second cause of degraded performance.
+
+LAYER 4 — COVERAGE MAP
+  Binary: green = covered (≥ −70 dBm), red = dead zone (< −70 dBm).
+  −70 dBm is the minimum usable signal for reliable data transmission.
+  Coverage % is shown in the stats panel.
+  Use this to calculate and report the percentage of the room that is well covered.
+
+
+================================================================================
+PART I — WHAT TO SAY IN YOUR VIVA ABOUT THIS FEATURE
+================================================================================
+
+"I implemented an RF site survey visualisation module inspired by professional
+tools such as NetSpot. The system computes a 2D heatmap grid across the lab
+floor plan using the Log-Distance Path Loss model at each grid cell, applying
+per-wall attenuation corrections using IEEE 802.11 propagation models.
+
+Four visualisation layers are available: RSSI (signal strength), SNR
+(signal-to-noise ratio), channel overlap (interference), and binary coverage.
+
+The heatmap updates every 15 seconds with live scan data from the sensing
+subsystem. The user can isolate any individual AP's coverage zone by clicking
+its entry in the inspector panel, and can hover over any point to see the
+estimated RSSI and distance from the nearest AP at that location.
+
+This feature directly visualises the core problem: that one AP accumulates
+users while others with available capacity are underused, precisely because
+students cannot see the signal landscape the way this map reveals it."
+
+
+================================================================================
+SUMMARY — ORDER TO IMPLEMENT
+================================================================================
+
+1. Add new config settings (Part B)                      — 10 minutes
+2. Create heatmap_engine.py (Part C)                     — 20 minutes
+3. Add /api/heatmap route to app.py (Part D)             — 5 minutes
+4. Create templates/survey.html (Part E)                 — 30 minutes
+5. Add /survey route + link in dashboard (Part F)        — 5 minutes
+6. Physically measure your lab and update config.py (Part G) — 30 minutes
+7. Run: python app.py → open http://localhost:5000/survey — test all 4 layers
+
+Total estimated time: 2 to 3 hours
+
+================================================================================
+END OF GUIDE
+================================================================================

@@ -1,0 +1,37 @@
+# Node / frontend
+node_modules/
+dist/
+.vite/
+
+# Python / backend
+venv/
+.venv/
+__pycache__/
+*.pyc
+wifi_log.db
+wifi_export.csv
+
+# Secrets and local env
+.env
+.env.*
+!.env.example
+
+# OS / editor noise
+.DS_Store
+.idea/
+.vscode/
+.claude/
+
+# Android build outputs
+android/build/
+android/app/build/
+android/.gradle/
+android/capacitor-cordova-android-plugins/build/
+*.apk
+*.aab
+
+# Android signing secrets - never commit
+android/app/*.keystore
+android/app/*.jks
+android/keystore.properties
+

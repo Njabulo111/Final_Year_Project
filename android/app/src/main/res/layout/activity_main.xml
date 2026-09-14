@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:background="#F0F4F8">
+
+    <TextView
+        android:text="WiFi Congestion Monitor"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:textColor="#0D2D5E"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingBottom="4dp" />
+
+    <TextView
+        android:id="@+id/tvCurrentAP"
+        android:text="Scanning..."
+        android:textSize="12sp"
+        android:textColor="#555555"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingBottom="8dp" />
+
+    <TextView
+        android:id="@+id/tvRecommendation"
+        android:text="Waiting for scan..."
+        android:textSize="13sp"
+        android:textColor="#1A3D6E"
+        android:background="#D5E8F5"
+        android:padding="12dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="10dp" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvAPList"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+</LinearLayout>

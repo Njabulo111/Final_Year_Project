@@ -1,0 +1,345 @@
+My basic PROJECT CORE IDEA
+Your project is about WiFi congestion in crowded university areas.
+The problem is not only “slow internet”.
+The real engineering problem is this:
+Too many students connect to one WiFi access point, while other nearby access points are free or less busy.
+This happens because most devices choose WiFi based on signal strength, not based on how busy the access point is.
+WHAT IS AN ACCESS POINT?
+An access point, AP, is the WiFi device that your laptop or phone connects to.
+People call it a router, but in campus networks it is usually called an access point.
+Example:
+AP 1 has strong signal and 80 students connected.
+AP 2 has slightly weaker signal and only 10 students connected.
+Your laptop may still connect to AP 1 because the signal is stronger.
+That causes congestion.
+WHAT IS CONGESTION?
+Congestion means too many devices are trying to use the same limited network resource at the same time.
+Like:
+One AP has limited bandwidth.
+If 5 students share it, each student gets good speed.
+If 80 students share it, each student gets slow speed.
+WHY YOUR SUPERVISOR WAS CONCERNED
+Your first idea was too big.
+It wanted to:
+Force devices to change APs.
+Use LSTM AI.
+Use federated learning.
+Use 802.11r roaming.
+Control WiFi behavior automatically.
+That is too difficult for a final-year project because:
+You may not have access to university AP settings.
+Operating systems do not easily allow apps to force WiFi roaming.
+AI training needs a lot of data.
+Federated learning is advanced.
+802.11r depends on campus network configuration.
+So the project must become simpler and buildable.
+FINAL WORKING SOLUTION
+Your final solution should be:
+Passive Intelligent WiFi Monitoring and Recommendation System
+Meaning:
+The system will not force users to move.
+It will monitor nearby WiFi access points.
+It will calculate which AP is better.
+It will recommend the best AP to the user or IT admin.
+It will show congestion status on a dashboard.
+This is feasible.
+WHAT THE SYSTEM WILL DO
+Step 1: Scan nearby WiFi networks.
+Step 2: Collect useful measurements.
+Step 3: Calculate a quality score for each AP.
+Step 4: Compare APs.
+Step 5: Detect overloaded APs.
+Step 6: Recommend the best AP.
+Step 7: Show results on a dashboard.
+Step 8: Store data for analysis.
+STEP 1: DEVICE SCANS WIFI
+You use a laptop or Raspberry Pi to scan WiFi.
+It looks for all nearby access points.
+It collects:
+SSID
+BSSID
+RSSI
+Channel
+Frequency
+Signal quality
+WHAT IS SSID?
+SSID is the WiFi name.
+Example:
+UJ-WiFi
+Eduroam
+WHAT IS BSSID?
+BSSID is the unique address of one AP.
+Many APs can use the same WiFi name.
+Example:
+SSID: Eduroam
+AP 1 BSSID: AA:11:22:33:44:55
+AP 2 BSSID: BB:11:22:33:44:55
+So BSSID helps you identify the exact AP.
+WHAT IS RSSI?
+RSSI means Received Signal Strength Indicator.
+It shows how strong the WiFi signal is.
+It is measured in dBm.
+Example:
+-40 dBm means very strong.
+-60 dBm means good.
+-75 dBm means weak.
+-90 dBm means very poor.
+STEP 2: COLLECT NETWORK PERFORMANCE DATA
+Signal strength alone is not enough.
+You also need performance data.
+Your system should measure:
+Ping delay
+Packet loss
+Download speed or estimated throughput
+Number of visible APs
+Current connected AP
+WHAT IS PING?
+Ping measures delay.
+It sends a small message to a server and waits for a reply.
+Example:
+Ping = 10 ms means good.
+Ping = 100 ms means slow.
+Ping = 300 ms means bad.
+WHAT IS PACKET LOSS?
+Packet loss means some data does not arrive.
+Example:
+If you send 100 packets and 5 fail, packet loss is 5%.
+High packet loss means unstable connection.
+WHAT IS THROUGHPUT?
+Throughput means actual data speed.
+Example:
+20 Mbps means the connection can move about 20 megabits per second.
+STEP 3: CREATE A QUALITY SCORE
+The system gives every AP a score.
+Example:
+AP Score = Signal Score + Latency Score + Packet Loss Score + Load Estimate Score
+Simple meaning:
+Strong signal gives higher score.
+Low delay gives higher score.
+Low packet loss gives higher score.
+Less congestion gives higher score.
+Example:
+AP 1:
+RSSI = -45 dBm, strong
+Ping = 180 ms, bad
+Packet loss = 8%, bad
+Score = 55%
+AP 2:
+RSSI = -60 dBm, good
+Ping = 25 ms, good
+Packet loss = 1%, good
+Score = 85%
+Even though AP 1 has stronger signal, AP 2 is better.
+This is the heart of your project.
+STEP 4: COMPARE ACCESS POINTS
+The system compares all nearby APs.
+It asks:
+Which AP has the best score?
+Is the current AP congested?
+Is another AP better?
+Is the better AP much better, or only slightly better?
+You need a threshold.
+WHAT IS A THRESHOLD?
+A threshold is a limit used to make a decision.
+Example:
+Only recommend switching if another AP is at least 20% better.
+This prevents unnecessary switching.
+STEP 5: SHOW RECOMMENDATION
+The system then displays:
+Current AP
+Current signal strength
+Ping
+Packet loss
+Best detected AP
+Congestion warning
+Recommendation
+Example dashboard message:
+Current AP: Eduroam AP-01
+Signal: Strong
+Ping: High
+Packet loss: High
+Status: Congested
+Recommended AP: Eduroam AP-03
+Reason: Lower delay and better stability
+STEP 6: STORE DATA
+Your system saves results into a file or database.
+Example:
+CSV file
+SQLite database
+Excel file
+The stored data can include:
+Time
+Connected AP
+RSSI
+Ping
+Packet loss
+Score
+Recommended AP
+Status
+This lets you prove the system works.
+EQUIPMENT YOU NEED
+Minimum setup:
+Laptop
+Python
+WiFi adapter
+Campus WiFi access
+Optional setup:
+Raspberry Pi
+External USB WiFi adapter
+Small screen or web dashboard
+Router/APs for lab testing
+Best final-year setup:
+Use a laptop for development.
+Use Raspberry Pi as monitoring node.
+Use Python for scanning and scoring.
+Use Flask for dashboard.
+Use SQLite for data storage.
+WHAT IS RASPBERRY PI?
+A Raspberry Pi is a small computer.
+You can use it to scan WiFi and run your monitoring system.
+It is good because it is cheap and portable.
+WHERE THE SYSTEM IS PLACED
+Option 1: Student laptop
+The app runs on your laptop.
+It scans WiFi from the user’s position.
+Best for prototype.
+Option 2: Fixed monitoring point
+Place Raspberry Pi inside a lab.
+It monitors the WiFi environment in that room.
+Best for testing congestion.
+Option 3: Multiple monitoring points
+Place several Raspberry Pis in different rooms.
+Each sends data to one dashboard.
+This is better, but more work.
+For your project, use Option 1 or Option 2.
+BUILDING BLOCKS
+Your system has 5 main parts.
+
+
+Sensing subsystem
+
+
+This scans WiFi and measures network quality.
+Input:
+WiFi signals
+Output:
+RSSI, AP name, BSSID, channel, ping
+
+
+Processing subsystem
+
+
+This calculates the AP quality score.
+Input:
+RSSI, ping, packet loss
+Output:
+AP score
+
+
+Decision subsystem
+
+
+This decides whether the current AP is good or bad.
+Input:
+AP scores
+Output:
+Recommendation
+
+
+Data storage subsystem
+
+
+This saves measurements.
+Input:
+Results
+Output:
+CSV or database records
+
+
+User interface subsystem
+
+
+This shows results to the user.
+Input:
+Scores and recommendations
+Output:
+Dashboard
+HOW DATA FLOWS
+Start
+Scan WiFi
+Measure signal
+Measure ping
+Measure packet loss
+Calculate AP score
+Compare APs
+Detect congestion
+Recommend best AP
+Show dashboard
+Save results
+Repeat every few seconds
+WHAT YOU WILL BUILD IN PRACTICE
+You will build a software prototype.
+It should do this:
+Open Python program.
+Scan WiFi.
+Show nearby APs.
+Measure current connection quality.
+Calculate score.
+Display recommendation.
+Save results.
+Show graph or dashboard.
+WHAT YOU WILL NOT BUILD
+You will not:
+Modify university APs.
+Force phones or laptops to switch APs.
+Change router firmware.
+Train a large AI model.
+Control campus network infrastructure.
+Build PCB circuits.
+This keeps the project feasible.
+WHY THIS IS STILL ENGINEERING
+Because you are still solving the real problem.
+You are using:
+Signal measurement
+Network performance measurement
+Scoring model
+Trade-off analysis
+System architecture
+Subsystem integration
+Data-driven decision making
+Your system helps identify congestion and recommend better AP usage.
+SIMPLE EXAMPLE
+Imagine three APs in a lab.
+AP 1:
+Signal: -45 dBm
+Ping: 180 ms
+Packet loss: 6%
+Score: 50%
+AP 2:
+Signal: -60 dBm
+Ping: 30 ms
+Packet loss: 1%
+Score: 85%
+AP 3:
+Signal: -70 dBm
+Ping: 60 ms
+Packet loss: 2%
+Score: 70%
+Normal WiFi may choose AP 1 because signal is strongest.
+Your system recommends AP 2 because performance is better.
+That is intelligent load balancing support.
+FINAL PROJECT STORY
+Problem:
+Students experience slow WiFi because too many users connect to the same AP.
+Cause:
+Devices choose APs mainly by signal strength.
+Solution:
+Build a monitoring system that checks signal strength and network performance.
+Intelligence:
+The system calculates a quality score for each AP.
+Output:
+The system recommends the best AP and warns about congestion.
+Implementation:
+Python, WiFi scan, ping test, scoring model, dashboard, data logging.
+Result:
+A feasible system that can be built, tested, and defended.

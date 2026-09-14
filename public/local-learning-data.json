@@ -1,0 +1,52 @@
+[
+  {
+    "timestamp": "2026-08-05T08:00:00Z",
+    "ssid": "UJ Lab WiFi",
+    "bssid": "AA:BB:CC:DD:EE:01",
+    "signal": -56,
+    "latency": 18,
+    "loss": 0.3,
+    "stability": 88,
+    "score": 91
+  },
+  {
+    "timestamp": "2026-08-05T08:05:00Z",
+    "ssid": "UJ Lab WiFi",
+    "bssid": "AA:BB:CC:DD:EE:01",
+    "signal": -60,
+    "latency": 22,
+    "loss": 0.5,
+    "stability": 85,
+    "score": 86
+  },
+  {
+    "timestamp": "2026-08-05T08:10:00Z",
+    "ssid": "UJ Lab WiFi",
+    "bssid": "AA:BB:CC:DD:EE:01",
+    "signal": -63,
+    "latency": 24,
+    "loss": 0.7,
+    "stability": 82,
+    "score": 82
+  },
+  {
+    "timestamp": "2026-08-05T08:15:00Z",
+    "ssid": "UJ Lab WiFi",
+    "bssid": "AA:BB:CC:DD:EE:01",
+    "signal": -58,
+    "latency": 19,
+    "loss": 0.4,
+    "stability": 86,
+    "score": 89
+  },
+  {
+    "timestamp": "2026-08-05T08:20:00Z",
+    "ssid": "UJ Lab WiFi",
+    "bssid": "AA:BB:CC:DD:EE:01",
+    "signal": -62,
+    "latency": 26,
+    "loss": 0.8,
+    "stability": 80,
+    "score": 80
+  }
+]

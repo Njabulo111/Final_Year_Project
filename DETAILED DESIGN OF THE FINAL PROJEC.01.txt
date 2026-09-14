@@ -1,0 +1,502 @@
+DETAILED DESIGN OF THE FINAL PROJECT
+Multi-Device Intelligent WiFi Congestion Monitoring and Recommendation System
+
+CORE PROJECT IDEA
+
+The system helps users avoid WiFi congestion using their own device.
+
+Devices supported:
+
+• Laptop
+• Smartphone
+• Tablet
+
+The system runs locally on the user device.
+
+It does three things:
+
+• observes WiFi conditions
+• analyses connection quality
+• recommends better connectivity
+
+It does NOT control WiFi infrastructure.
+It does NOT force switching between access points.
+
+FINAL SYSTEM CONCEPT
+
+User device acts as:
+
+• sensing unit
+• processing unit
+• display unit
+
+Flow:
+
+Device WiFi → Data collection → Intelligent scoring → Dashboard → User decision
+
+Prototype will be built on a laptop.
+
+Reason:
+
+• easier WiFi access
+• easier development
+• fewer OS restrictions
+
+Final concept supports mobile devices.
+
+PROBLEM DEFINITION
+
+In high-density environments:
+
+• many users connect to same AP
+• devices choose AP based on signal strength only
+• this leads to congestion
+
+Result:
+
+• high latency
+• packet loss
+• slow speeds
+
+Goal:
+
+Help user identify better AP or better location.
+
+SYSTEM FUNCTION OVERVIEW
+
+The system will:
+
+• scan nearby access points
+• identify each AP using BSSID
+• measure signal strength
+• measure latency
+• estimate packet loss
+• calculate quality score
+• classify AP condition
+• display results visually
+• recommend better connection or movement
+
+KEY DEFINITIONS
+
+Access Point
+Device that provides WiFi coverage.
+
+SSID
+WiFi network name.
+
+BSSID
+Unique identifier of each AP.
+
+RSSI
+Signal strength in dBm.
+
+Latency
+Time delay in milliseconds.
+
+Packet loss
+Percentage of lost data packets.
+
+Throughput
+Actual data transfer speed.
+
+Congestion
+Network overload causing poor performance.
+
+SYSTEM ARCHITECTURE
+
+The system has five subsystems.
+
+Sensing subsystem
+Network testing subsystem
+Intelligent scoring subsystem
+Data storage subsystem
+User interface subsystem
+HIGH-LEVEL CONNECTION
+
+WiFi environment
+→ Sensing subsystem
+→ Network testing subsystem
+→ Scoring subsystem
+→ Dashboard
+→ User
+
+Also:
+
+Scoring subsystem
+→ Data storage
+
+DETAILED SYSTEM FLOW
+
+Step 1: User opens application
+
+• Runs on laptop or mobile
+• Dashboard opens locally
+
+Step 2: WiFi scanning
+
+Device scans nearby networks.
+
+Data collected:
+
+• SSID
+• BSSID
+• RSSI
+• channel
+
+Laptop:
+
+Uses OS commands like netsh.
+
+Mobile:
+
+Uses platform APIs where allowed.
+
+Step 3: Identify APs
+
+System separates APs using BSSID.
+
+This ensures each AP is treated individually.
+
+Step 4: Measure performance
+
+Device measures current connection.
+
+Method:
+
+Ping test
+
+Outputs:
+
+• latency
+• packet loss
+
+Optional:
+
+Throughput test
+
+Step 5: Data preparation
+
+Convert raw values into normalized scores.
+
+Example:
+
+RSSI → signal score
+Latency → delay score
+Packet loss → reliability score
+
+Range:
+
+0 to 100
+
+Step 6: Intelligent scoring
+
+Calculate final AP score.
+
+Example:
+
+Score = 0.35 signal + 0.30 latency + 0.20 packet loss + 0.15 stability
+
+Meaning:
+
+Higher score = better AP
+
+Step 7: Classification
+
+Convert score into status.
+
+Score ≥ 75 → Good
+Score 50–74 → Moderate
+Score < 50 → Congested
+
+Step 8: Dashboard display
+
+Show:
+
+• AP list
+• signal strength
+• latency
+• packet loss
+• score
+• color indicator
+
+Colors:
+
+Green = good
+Orange = moderate
+Red = congested
+
+Step 9: Recommendation
+
+System highlights best AP.
+
+Shows message:
+
+“Better connection available nearby”
+
+Step 10: User action
+
+User can:
+
+• move location
+• reconnect manually
+• wait for automatic roaming
+
+Step 11: Device behavior
+
+Device may switch AP automatically if signal improves.
+
+This is controlled by OS, not your system.
+
+Step 12: Data storage
+
+System saves:
+
+• timestamp
+• AP data
+• scores
+• classification
+
+Stored in:
+
+• CSV
+• SQLite
+
+Step 13: Loop
+
+System repeats every few seconds.
+
+SUBSYSTEM DETAILS
+
+Sensing subsystem
+
+Function:
+
+Detect WiFi APs.
+
+Input:
+
+RF signals.
+
+Output:
+
+AP list.
+
+Network testing subsystem
+
+Function:
+
+Measure connection quality.
+
+Input:
+
+Active connection.
+
+Output:
+
+Latency and packet loss.
+
+Intelligent scoring subsystem
+
+Function:
+
+Calculate AP quality.
+
+Input:
+
+RSSI, latency, packet loss.
+
+Output:
+
+Score and status.
+
+Data storage subsystem
+
+Function:
+
+Store results.
+
+Input:
+
+Scores and measurements.
+
+Output:
+
+Historical data.
+
+User interface subsystem
+
+Function:
+
+Display results.
+
+Input:
+
+Scores and status.
+
+Output:
+
+Dashboard.
+
+DASHBOARD DESIGN
+
+Display:
+
+• current connection
+• nearby APs
+• signal bars
+• score values
+• color status
+
+Optional:
+
+• graph over time
+• recommendation message
+
+USER REQUIREMENTS
+
+User wants:
+
+• fast internet
+• stable connection
+• no manual analysis
+• simple interface
+• real-time updates
+• privacy protection
+
+SYSTEM REQUIREMENTS
+
+System must:
+
+• scan WiFi networks
+• identify APs
+• measure latency
+• estimate packet loss
+• calculate score
+• classify AP
+• display dashboard
+• store data
+• run locally
+• avoid infrastructure changes
+
+DEVICE SUPPORT DESIGN
+
+Laptop:
+
+• full functionality
+• primary prototype
+
+Smartphone:
+
+• limited WiFi scan access
+• possible app implementation
+
+Tablet:
+
+• similar to smartphone
+
+Architecture remains same.
+
+Only sensing method changes per device.
+
+INTELLIGENT MODEL DESIGN
+
+Use simple weighted scoring.
+
+Advantages:
+
+• fast
+• explainable
+• low computation
+• feasible
+
+Optional upgrade:
+
+Decision tree model.
+
+IMPLEMENTATION STACK
+
+Laptop prototype:
+
+• Python
+• Streamlit or Flask
+• Pandas
+• CSV or SQLite
+
+Mobile concept:
+
+• Android app (future)
+• uses WiFi APIs
+
+CODE FLOW
+
+Start system
+
+Loop:
+
+scan WiFi
+get AP data
+measure latency
+calculate scores
+classify
+display
+store
+wait
+
+Repeat
+
+TESTING PLAN
+
+Test in real environment.
+
+Test scenarios:
+
+• low user density
+• high user density
+• movement across room
+
+Measure:
+
+• score change
+• latency change
+• dashboard response
+
+VALIDATION
+
+Show:
+
+• before vs after movement
+• congestion detection
+• improved connection
+
+LIMITATIONS
+
+System cannot:
+
+• locate AP exactly
+• force switching
+• access hidden AP load data
+• control network
+
+RSSI is affected by environment.
+
+Mobile OS may restrict data access.
+
+WHAT NOT TO DO
+
+Do not:
+
+• claim full AI system if not implemented
+• claim automatic switching
+• modify AP hardware
+• use complex models beyond scope
+• rely on browser-only scanning
+• assume exact AP position
+• overpromise performance
+
+FINAL SYSTEM DESCRIPTION
+
+The system runs on user devices including laptops, smartphones, and tablets. It collects WiFi signal and performance data, processes the data using a lightweight scoring model, and displays a dashboard that classifies nearby access points as good, moderate, or congested. The system recommends better connectivity zones or access points to the user. The system does not modify network infrastructure and does not force device roaming. It is a feasible decision-support tool for reducing WiFi congestion impact in high-density environments.
+
+ONE LINE DEFENSE
+
+The system improves user connectivity by providing real-time visibility of WiFi congestion and recommending better connection options using on-device analysis.
